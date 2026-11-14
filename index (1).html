@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FireSync: Unified MODIS and VIIRS Fire Hotspots</title>
+<style>
+:root{--bg:#f6f3ee;--panel:#fff;--ink:#1d1b19;--mut:#6b655e;--line:#ddd6cc;--land:#e6dfd2;--sea:#eef3f6;--river:#6aa3c8;--modis:#2b6cb0;--viirs:#c05621;--uni:#c0272d;--grid:#d69e2e;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15171a;--panel:#1e2125;--ink:#ece8e1;--mut:#9a948b;--line:#33373c;--land:#2a2e33;--sea:#1a2127;--river:#3b6f94;--modis:#63a4f0;--viirs:#f6a05a;--uni:#ff5a4f;--grid:#ecc94b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15171a;--panel:#1e2125;--ink:#ece8e1;--mut:#9a948b;--line:#33373c;--land:#2a2e33;--sea:#1a2127;--river:#3b6f94;--modis:#63a4f0;--viirs:#f6a05a;--uni:#ff5a4f;--grid:#ecc94b;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6}
+.wrap{max-width:1120px;margin:0 auto;padding:22px 16px 48px}
+h1{font-size:clamp(1.7rem,4vw,2.5rem);margin:0 0 6px;font-weight:800;letter-spacing:-.02em}
+h2{font-size:1.05rem;margin:0 0 8px}
+.sub{color:var(--mut);margin:0 0 18px;max-width:72ch}
+.grid{display:grid;grid-template-columns:1fr 300px;gap:16px;margin-bottom:16px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:860px){.grid,.two{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;position:relative}
+canvas{width:100%;height:auto;display:block;border-radius:6px}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}
+button{font:inherit;font-size:.9rem;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:5px 11px;border-radius:6px;cursor:pointer}
+button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--uni);outline-offset:2px}
+input[type=range]{flex:1;min-width:140px}
+.stat{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:5px 0}
+.stat b{font-size:1.1rem}
+.dot{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:middle}
+.note{font-size:.85rem;color:var(--mut)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.sc{overflow-x:auto}
+ol,ul{padding-left:20px;margin:6px 0;font-size:.9rem}
+#tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:.78rem;padding:6px 8px;border-radius:6px;display:none;line-height:1.4;z-index:5;white-space:nowrap}
+.bar{height:6px;background:var(--uni);border-radius:3px;margin-top:3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>FireSync: one map for every fire hotspot</h1>
+<p class="sub">FireSync merges active-fire detections from two satellite sensors, MODIS (1 km) and VIIRS (375 m), into a single harmonized layer. Compare the sensors, track fire spread over time, and find the regions most prone to burning. Demo data is simulated, with fire regions placed around the world.</p>
+
+<div class="grid">
+<div class="card">
+<div class="row" role="group" aria-label="Layers">
+<button data-l="modis" aria-pressed="true"><span class="dot" style="background:var(--modis)"></span>MODIS</button>
+<button data-l="viirs" aria-pressed="true"><span class="dot" style="background:var(--viirs);border-radius:50%"></span>VIIRS</button>
+<button data-l="uni" aria-pressed="false"><span class="dot" style="background:var(--uni);border-radius:50%"></span>Unified</button>
+<button data-l="heat" aria-pressed="false"><span class="dot" style="background:var(--grid)"></span>Fire-prone areas</button>
+</div>
+<div class="row" role="group" aria-label="View">
+<span class="note">Zoom to:</span>
+<button data-v="world" aria-pressed="true">World</button>
+<button data-v="africa" aria-pressed="false">Africa</button>
+<button data-v="sa" aria-pressed="false">South America</button>
+<button data-v="egypt" aria-pressed="false">Egypt</button>
+</div>
+<canvas id="c" width="1000" height="390" aria-label="World map of fire hotspots"></canvas>
+<div id="tip"></div>
+<div class="row" style="margin-top:10px">
+<button id="play">▶ Play timeline</button>
+<input id="day" type="range" min="0" max="6" value="6" aria-label="Day">
+<span id="dl">Day 7 of 7</span>
+</div>
+<p class="note" style="margin:0">Hover over a hotspot for details. Hollow squares are MODIS, dots are VIIRS, red dots are unified hotspots (bright means both sensors agree).</p>
+</div>
+
+<div>
+<div class="card" style="margin-bottom:16px">
+<h2>Statistics up to selected day</h2>
+<div class="stat"><span>MODIS detections</span><b id="sm">0</b></div>
+<div class="stat"><span>VIIRS detections</span><b id="sv">0</b></div>
+<div class="stat"><span>Detected by both</span><b id="sb">0</b></div>
+<div class="stat"><span>Unified hotspots (deduplicated)</span><b id="su">0</b></div>
+<div class="stat"><span>Sensor agreement</span><b id="sa">0%</b></div>
+<div class="stat"><span>Total fire power (FRP)</span><b id="sf">0 MW</b></div>
+</div>
+<div class="card">
+<h2>Top regions</h2>
+<div id="top"></div>
+</div>
+</div>
+</div>
+
+<div class="two">
+<div class="card sc">
+<h2>Sensor comparison</h2>
+<table>
+<tr><th></th><th>MODIS</th><th>VIIRS</th></tr>
+<tr><td>Satellites</td><td>Terra, Aqua</td><td>Suomi NPP, NOAA-20, NOAA-21</td></tr>
+<tr><td>Pixel size</td><td>1 km</td><td>375 m</td></tr>
+<tr><td>Strength</td><td>Long record since 2000</td><td>Detects small, cooler fires</td></tr>
+<tr><td>Confidence</td><td>0 to 100%</td><td>Low, nominal, high</td></tr>
+<tr><td>Challenge</td><td>Coarser location</td><td>Different schema and timing</td></tr>
+</table>
+</div>
+<div class="card">
+<h2>How the unification works</h2>
+<ol>
+<li><b>Ingest:</b> pull MODIS and VIIRS active-fire data (for example from NASA FIRMS).</li>
+<li><b>Normalize:</b> one schema, UTC time, confidence mapped to a common 0 to 100 scale.</li>
+<li><b>Match:</b> link detections within about 1 km and a few hours.</li>
+<li><b>Merge:</b> output one hotspot with sensors, confidence and FRP.</li>
+<li><b>Analyze:</b> count hotspots on a grid to find fire-prone areas and trends.</li>
+</ol>
+</div>
+</div>
+
+<div class="two">
+<div class="card">
+<h2>What you can do with it</h2>
+<ul>
+<li>Compare satellite results side by side.</li>
+<li>Locate fires more precisely by combining both sensors.</li>
+<li>Follow how a fire spreads day by day.</li>
+<li>Rank the areas most exposed to fires.</li>
+</ul>
+</div>
+<div class="card">
+<h2>Planned features</h2>
+<ul>
+<li>Live feed from the NASA FIRMS API.</li>
+<li>Date range and confidence filters.</li>
+<li>Export unified hotspots as CSV or GeoJSON.</li>
+<li>Alerts for new fires near a chosen area.</li>
+</ul>
+<p class="note">Demo data is simulated and for illustration only.</p>
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+var VIEWS={world:[-180,180,-58,80],africa:[-20,54,-36,38],sa:[-84,-32,-57,14],egypt:[24.5,37.5,21.5,32.2]};
+var POLY=[
+[[-168,66],[-160,70],[-141,70],[-125,70],[-95,72],[-82,69],[-80,63],[-94,59],[-90,52],[-80,52],[-78,62],[-65,60],[-56,52],[-66,45],[-70,42],[-76,35],[-81,31],[-80,25],[-84,30],[-90,30],[-97,27],[-97,21],[-90,21],[-88,16],[-83,10],[-78,8],[-80,8],[-86,12],[-92,15],[-105,20],[-110,24],[-113,31],[-117,32],[-121,35],[-124,41],[-124,48],[-130,55],[-140,60],[-152,59],[-165,55],[-158,58],[-165,62]],
+[[-55,60],[-45,60],[-20,70],[-20,82],[-60,82],[-70,77],[-55,70]],
+[[-78,8],[-72,12],[-62,10],[-52,5],[-50,0],[-35,-6],[-39,-14],[-41,-22],[-48,-26],[-58,-35],[-65,-41],[-68,-52],[-72,-54],[-75,-48],[-73,-37],[-71,-18],[-76,-14],[-81,-5],[-80,0],[-77,4]],
+[[-9,37],[-9,43],[-2,44],[-4,48],[2,51],[8,54],[10,57],[12,55],[20,55],[24,60],[30,60],[22,65],[17,69],[28,71],[45,68],[60,70],[80,73],[100,77],[113,74],[140,72],[160,70],[180,69],[180,65],[170,60],[163,58],[156,51],[142,59],[136,54],[140,48],[130,42],[127,38],[126,35],[122,40],[118,38],[122,31],[120,25],[110,21],[108,16],[109,11],[105,9],[100,13],[100,7],[104,1],[98,8],[98,16],[94,17],[92,22],[87,21],[80,15],[77,8],[73,17],[72,21],[67,25],[58,25],[56,24],[59,22],[52,16],[43,13],[39,21],[35,28],[34,31],[36,36],[30,36],[27,37],[26,40],[23,38],[22,37],[19,41],[16,38],[12,42],[8,44],[3,43],[-1,37],[-6,36]],
+[[-17,21],[-16,28],[-9,33],[-6,36],[10,37],[11,33],[20,31],[32,31],[34,28],[38,20],[43,12],[51,12],[42,-1],[40,-10],[40,-16],[35,-24],[32,-29],[20,-35],[18,-32],[12,-17],[13,-8],[9,-1],[9,4],[-2,5],[-8,4],[-13,8],[-17,14]],
+[[114,-22],[122,-18],[130,-12],[137,-12],[142,-11],[146,-19],[153,-26],[150,-37],[141,-38],[135,-34],[130,-32],[115,-34]],
+[[95,5],[98,4],[106,-3],[104,-6],[100,-1]],
+[[109,1],[117,7],[119,1],[116,-4],[110,-3]]];
+var EG=[[25,31.6],[29.9,31.2],[31.5,31.5],[32.3,31.3],[34.2,31.3],[34.9,29.5],[34.3,27.8],[33.9,28],[32.6,30],[33.8,27.2],[34.9,25],[35.5,23.9],[36.9,22],[25,22]];
+var NILE=[[32.9,23.9],[32.7,25.3],[32.3,26.5],[31.2,27.2],[30.8,28.1],[31.1,29.3],[31.25,30],[30.5,30.6],[29.9,31.2]];
+var CL=[["Amazon Basin",-58,-8,7,4,70],["Cerrado, Brazil",-48,-14,4,4,40],["Central Africa",22,-8,9,5,90],["Sahel and West Africa",0,9,10,3,70],["Southern Africa",27,-16,6,4,50],["Siberia",110,58,14,5,60],["Canada boreal forest",-115,57,10,4,40],["California",-120,38,3,3,35],["Northern Australia",135,-15,9,4,55],["Indonesia",108,-2,6,4,45],["Southeast Asia",100,18,5,4,50],["India",80,22,6,4,40],["Eastern Europe",35,50,6,3,30],["Mediterranean",20,39,6,2,30],["Nile Valley and Delta, Egypt",31,29.5,.9,1.4,45],["Sinai, Egypt",34,29,.4,.4,6]];
+var seed=11;function R(){seed|=0;seed=seed+0x6D2B79F5|0;var t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}
+function G(){return(R()+R()+R()-1.5)/1.5}
+var F=[];
+CL.forEach(function(c,ci){for(var i=0;i<c[5];i++){var lo=c[1]+G()*c[3],la=c[2]+G()*c[4];
+var d=Math.min(1,Math.hypot((lo-c[1])/c[3],(la-c[2])/c[4]));var day=Math.min(6,Math.floor(d*3.5+R()*2.5));
+var v=R()<.95,m=R()<.6;if(!v&&!m)v=true;
+F.push({r:ci,lo:lo,la:la,day:day,v:v,m:m,frp:Math.round(5+R()*R()*400),vo:[lo+G()*.12,la+G()*.12],mo:[lo+G()*.5,la+G()*.5]})}});
+var cv=document.getElementById('c'),x=cv.getContext('2d'),tip=document.getElementById('tip');
+var st={modis:true,viirs:true,uni:false,heat:false,day:6,view:'world'},timer=null,W=1000,H=390;
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
+function B(){return VIEWS[st.view]}
+function P(lo,la){var b=B();return[(lo-b[0])/(b[1]-b[0])*W,(b[3]-la)/(b[3]-b[2])*H]}
+function K(){var b=B();return 360/(b[1]-b[0])}
+function path(a){x.beginPath();a.forEach(function(p,i){var q=P(p[0],p[1]);i?x.lineTo(q[0],q[1]):x.moveTo(q[0],q[1])})}
+function size(){var b=B();H=Math.round(W*(b[3]-b[2])/(b[1]-b[0])*(st.view==='world'?1.07:1.1));cv.height=H}
+function vis(){return F.filter(function(f){return f.day<=st.day})}
+function draw(){
+var b=B(),k=Math.sqrt(K());
+x.clearRect(0,0,W,H);x.fillStyle=css('--sea');x.fillRect(0,0,W,H);
+POLY.forEach(function(p){path(p);x.closePath();x.fillStyle=css('--land');x.fill();x.strokeStyle=css('--line');x.lineWidth=1.5;x.stroke()});
+path(EG);x.closePath();x.setLineDash([5,4]);x.strokeStyle=css('--mut');x.lineWidth=1.2;x.stroke();x.setLineDash([]);
+if(K()>3){x.strokeStyle=css('--river');x.lineWidth=4;path(NILE);x.stroke()}
+var e=P(29,26);x.fillStyle=css('--mut');x.font=(st.view==='world'?11:15)+'px sans-serif';x.fillText('Egypt',e[0],e[1]);
+var v=vis();
+if(st.heat){var s=(b[1]-b[0])/36,cells={},mx=0;v.forEach(function(f){var q=Math.floor(f.lo/s)+'_'+Math.floor(f.la/s);cells[q]=(cells[q]||0)+1;mx=Math.max(mx,cells[q])});
+x.fillStyle=css('--grid');for(var q in cells){var a=q.split('_'),p=P(a[0]*s,a[1]*s+s),r=P(a[0]*s+s,a[1]*s);x.globalAlpha=.2+.6*cells[q]/mx;x.fillRect(p[0],p[1],r[0]-p[0],r[1]-p[1])}x.globalAlpha=1}
+if(st.modis){x.strokeStyle=css('--modis');x.lineWidth=1.3;var z=Math.min(3+2*k,12);v.forEach(function(f){if(!f.m)return;var p=P(f.mo[0],f.mo[1]);x.strokeRect(p[0]-z/2,p[1]-z/2,z,z)})}
+if(st.viirs){x.fillStyle=css('--viirs');var r=Math.min(1.6+.9*k,5);v.forEach(function(f){if(!f.v)return;var p=P(f.vo[0],f.vo[1]);x.beginPath();x.arc(p[0],p[1],r,0,7);x.fill()})}
+if(st.uni){var u=Math.min(2.5+1.2*k,7);v.forEach(function(f){var p=P(f.lo,f.la),both=f.v&&f.m;x.fillStyle=css('--uni');x.globalAlpha=both?.95:.5;x.beginPath();x.arc(p[0],p[1],both?u:u*.75,0,7);x.fill();x.globalAlpha=1;if(f.day===st.day){x.strokeStyle=css('--uni');x.lineWidth=1.3;x.beginPath();x.arc(p[0],p[1],u+4,0,7);x.stroke()}})}
+stats(v);
+document.getElementById('dl').textContent='Day '+(st.day+1)+' of 7';
+document.getElementById('day').value=st.day}
+function set(i,t){document.getElementById(i).textContent=t}
+function stats(v){var m=0,vv=0,bo=0,fr=0,cnt={};v.forEach(function(f){if(f.m)m++;if(f.v)vv++;if(f.m&&f.v)bo++;fr+=f.frp;cnt[f.r]=(cnt[f.r]||0)+1});
+set('sm',m);set('sv',vv);set('sb',bo);set('su',v.length);set('sa',v.length?Math.round(bo/v.length*100)+'%':'0%');set('sf',fr.toLocaleString('en-US')+' MW');
+var arr=Object.keys(cnt).map(function(k){return[k,cnt[k]]}).sort(function(a,b){return b[1]-a[1]}).slice(0,5),mx=arr.length?arr[0][1]:1,h='';
+arr.forEach(function(a){h+='<div class="stat" style="display:block"><div style="display:flex;justify-content:space-between"><span>'+CL[a[0]][0]+'</span><b>'+a[1]+'</b></div><div class="bar" style="width:'+Math.round(a[1]/mx*100)+'%"></div></div>'});
+document.getElementById('top').innerHTML=h}
+document.querySelectorAll('button[data-l]').forEach(function(b){b.onclick=function(){var l=b.dataset.l;st[l]=!st[l];b.setAttribute('aria-pressed',st[l]);draw()}});
+document.querySelectorAll('button[data-v]').forEach(function(b){b.onclick=function(){st.view=b.dataset.v;document.querySelectorAll('button[data-v]').forEach(function(o){o.setAttribute('aria-pressed',o===b)});size();draw()}});
+var dayEl=document.getElementById('day');dayEl.oninput=function(){st.day=+dayEl.value;draw()};
+var pb=document.getElementById('play');
+function stop(){clearInterval(timer);timer=null;pb.textContent='▶ Play timeline'}
+pb.onclick=function(){if(timer){stop();return}st.day=0;draw();pb.textContent='⏸ Pause';
+timer=setInterval(function(){if(st.day>=6){stop();return}st.day++;draw()},1000)};
+cv.addEventListener('mousemove',function(ev){var rc=cv.getBoundingClientRect(),sx=W/rc.width,mx=(ev.clientX-rc.left)*sx,my=(ev.clientY-rc.top)*sx,best=null,bd=14;
+vis().forEach(function(f){var p=P(f.lo,f.la),d=Math.hypot(p[0]-mx,p[1]-my);if(d<bd){bd=d;best=f}});
+if(!best){tip.style.display='none';return}
+var sens=best.m&&best.v?'MODIS + VIIRS':best.v?'VIIRS only':'MODIS only';
+tip.innerHTML='<b>'+CL[best.r][0]+'</b><br>Day '+(best.day+1)+' · '+sens+'<br>Confidence: '+(best.m&&best.v?'High':'Medium')+' · FRP '+best.frp+' MW<br>'+best.la.toFixed(2)+'°, '+best.lo.toFixed(2)+'°';
+var cr=cv.parentNode.getBoundingClientRect();tip.style.display='block';
+tip.style.left=Math.min(ev.clientX-cr.left+12,cr.width-190)+'px';tip.style.top=(ev.clientY-cr.top+12)+'px'});
+cv.addEventListener('mouseleave',function(){tip.style.display='none'});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+size();draw();
+})();
+</script>
+</body>
+</html>
